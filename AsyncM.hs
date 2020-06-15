@@ -14,6 +14,7 @@ module AsyncM
   , allM
   , ifAliveM
   , advM
+  , progress
   , commitM
   , neverM
   , asyncM
@@ -32,12 +33,13 @@ import Control.Exception (catch, displayException, SomeException(..))
 newtype AsyncM a = AsyncM { runAsyncM :: ExceptT String (ReaderT Progress (ContT () IO)) a } 
                      deriving (Functor, Applicative, Monad, MonadIO, MonadReader Progress, MonadError String) 
 
-runM :: AsyncM a -> Progress -> (Either String a -> IO ()) -> IO ()
+runM :: AsyncM a -> Progress -> ((Either String a) -> IO ()) -> IO ()
 runM (AsyncM a) p k = runContT (runReaderT (runExceptT a) p) k
 
 runM_ :: AsyncM a -> (a -> IO ()) -> IO ()
 runM_ a k = progress >>= \p -> runM a p (either print k)
 
+asyncM :: (Progress -> (Either String a) -> IO ()) -> IO ()
 asyncM f =  AsyncM $ ExceptT $ ReaderT $ \p -> ContT $ \k -> f p k 
 
 timeout :: Int        -- number milliseconds
