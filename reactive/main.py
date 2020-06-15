@@ -4,12 +4,17 @@ import threading
 
 
 class AsyncM:
-    def __init__(self, e):
-        # f :: Progress -> (() -> IO()) -> IO ()
-        self.e = e
+    def __init__(self, f):
+        # AsyncM :: Either String (Progress -> (a -> IO()) -> IO())
+        self.f = f
 
     def bind(self, mf):
-        pass
+        # f :: Progress -> (a -> IO()) -> IO()
+        AsyncM(self.e.bind(lambda f: f(p)(lambda x: )))
+        return asyncM(f)
+    
+#    runAsyncM :: ExceptT String (ReaderT Progress (ContT () IO)) a 
+# t <- (timeout 29 >> getTime)
 
 def runM(a, p, k):
     a.e.bind(lambda f: f(p)(k))
@@ -18,7 +23,7 @@ def runM_(a, p, k):
     runM(a, p, lambda e: e.bind(lambda x: k(x)))
     
 def asyncM(f):
-    return AsyncM(Right(lambda p: lambda k: f(p, k)))
+    return AsyncM(lambda p: Right(lambda k: f(p, k)))
 
 def neverM():
     return asyncM(lambda p, k: Unit())
@@ -35,8 +40,6 @@ def timeout(ms):
         t = threading.Thread(target=g) # TODO: replace this with some more lightweight form of threads
         t.start()
     return asyncM(f)
-
-
 
 # Progress Object
 
@@ -119,4 +122,6 @@ def Unit():
 
 if __name__ == '__main__':
    a = timeout(1000)
-   runM_(a, Progress(), lambda x: print(x))
+#   runM_(a, Progress(), lambda x: print(x))
+   runM(a, Progress(), lambda e: e.bind(lambda x: print(x)))
+   
