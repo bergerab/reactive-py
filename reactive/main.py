@@ -31,7 +31,11 @@ class AsyncM:
             return a
         
         def f(p, k):
-            runM(self, p, lambda e: e.bind(lambda x: runM(lift(mf(x)), p, k)))
+            def handle_e(e):
+                if is_right(e):
+                    return e.bind(lambda x: runM(lift(mf(x)), p, k))
+                return k(e) # quit early
+            runM(self, p, handle_e)
             
         return asyncM(f)
 
@@ -82,12 +86,12 @@ def runM_(a, k=lambda x: x):
     If ~a~ has an error, print it.
     Otherwise, continue down the bind chain.
     '''
-    def f(e):
+    def k(e):
         if is_left(e):
             print(e.x)
         else:
             return k(e.x)
-    a.f(Progress())(f)
+    a.f(Progress())(k)
     
 def asyncM(f):
     '''
@@ -185,8 +189,6 @@ UNIT = object()
 def Unit():
     return UNIT
 
-
-
 def test1():
     '''
     Wait 10 seconds, then get the system time, map the Progress object to a non-sense value of 3
@@ -196,9 +198,14 @@ def test1():
     '''
     runM_(timeout(10000).bind(lambda _: time.time()) \
         .bind(lambda t: AsyncM.ask() \
-              .bind(lambda p: print(t, p))).local(lambda p: 3))  # make local a function instead?
+              .bind(lambda p: print(t, p))).local(lambda p: 3))
 
 def test2():
+    '''
+    Tests that errors work. If AsyncM.error is returned in a bind,
+    the following computations should be skipped, and the error message should be displayed
+    (because we are using runM_ and the behavior is that it prints the error message)
+    '''
     runM_(timeout(1000).bind(lambda _: time.time()) \
           .bind(lambda t: AsyncM.error('You should see this message.')) \
           .bind(lambda t: print('This shouldn\'t show.', t)))
