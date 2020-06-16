@@ -98,7 +98,7 @@ runS s k = h s
    where h s = do ifAliveM
                   (a, s') <- next s
                   -- use 'async' to avoid blocking the stream with k.
-                  liftIO $ async $ k a
+                  liftIO $ async $ k a -- we need to use await here in Python
                   h s' 
 
 run :: Stream a -> (a -> IO ()) -> IO ()
