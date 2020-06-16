@@ -4,6 +4,9 @@ import threading
 
 class AsyncM:
     def __init__(self, f):
+        '''
+        f :: Progress -> (Either String (a -> IO()) -> IO()) -> AsyncM a
+        '''
         self.f = f
 
     def bind(self, mf):
@@ -39,9 +42,19 @@ class AsyncM:
             
         return asyncM(f)
 
+    def seq(self, mf):
+        '''
+        seq :: AsyncM a -> AsyncM b -> AsyncM b
+
+        Analogous to >> in Haskell.
+        '''
+        return self.bind(lambda _: mf())
+
     @staticmethod
     def lift(x):
         '''
+        lift :: a -> AsyncM a
+        
         Analogous to ~return~ in Haskell.
         '''
         return asyncM(lambda p, k: k(Right(x)))
@@ -58,6 +71,8 @@ class AsyncM:
     @staticmethod
     def error(m):
         '''
+        error :: String -> AsyncM ()
+        
         Indicate an error with message ~m~.
         '''
         return asyncM(lambda p, k: k(Left(m)))
@@ -100,10 +115,73 @@ def asyncM(f):
     return AsyncM(lambda p: lambda k: f(p, k))
 
 def neverM():
+    '''
+    neverM :: AsyncM ()
+
+    Never calls the continuation.
+    '''
     return asyncM(lambda p, k: Unit())
+
+def noEmit(a):
+    '''
+    noEmit :: AsyncM a -> AsyncM a
+
+    Make a AsyncM that doesn't advance when inner progress is made.
+    '''
+    return AsyncM.ask().bind(lambda p: a.local(lambda _: noEmitP(p)))
+
+def oneEmit(a):
+    noEmit(a).bind(lambda x: advM().bind(lambda _: x))
+
+def forkM_(a):
+    return asyncM(lambda p, k: \
+                  AsyncM.lift(runM(a, p, lambda _: Unit())) \
+                  .bind(lambda _: k(Right(Unit()))))
+
+def raceM(a1, a2):
+    def do(p, k):
+        (p1, p2) = raceP(p)
+	done = False;
+        def kp(x):
+            if not done:
+                done = True
+                k(x)
+	runM(a1, p1, kp)
+	runM(a2, p2, kp)
+    return asyncM(do)
+
+def allM(a1, a2):
+    def do(p, k):
+        m1 = Unit()
+        m2 = Unit()
+
+        def kp(pair):
+            def f(x):
+                nonlocal m1, m2
+                if m2 == Unit():
+                    m1 = x
+                    if is_left(x):
+                        return k(Left(x.x))
+                    else:
+                        return Unit()
+                else:
+                    y = m2
+                    
+            return f
+                
+                
+        runM(a1, p, handle_e)
+        
+    return asyncM(do)
+    
+def advM():
+    return AsyncM.ask().bind(lambda p: advance(p))
 
 def ifAliveM():
     return asyncM(lambda p, k: ifAlive(p, lambda: k(Right(Unit()))))
+
+def commitM():
+    return ifAliveM().bind(lambda _: advM())
 
 def timeout(ms):
     def f(p, k):
