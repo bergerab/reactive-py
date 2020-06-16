@@ -1,6 +1,7 @@
 import time
-
 import threading
+
+from haskell import *
 
 class AsyncM:
     def __init__(self, f):
@@ -94,19 +95,21 @@ def runM(a, p=None, k=lambda x: x):
         p = Progress()
     a.f(p)(k)
 
-def runM_(a, k=lambda x: x):
+def runM_(a, p=None, k=lambda x: x):
     '''
     Run ~a~ using continuation ~k~.
 
     If ~a~ has an error, print it.
     Otherwise, continue down the bind chain.
     '''
+    if not p:
+        p = Progress()
     def kp(e):
         if is_left(e):
             print(e.x)
         else:
             return k(e.x)
-    a.f(Progress())(kp)
+    a.f(p)(kp)
     
 def asyncM(f):
     '''
@@ -237,35 +240,6 @@ def raceP(p):
     onAdvance(p2, lambda: [cancel(p1), advance(p)])
     onCancel(p, lambda: [cancel(p1), cancel(p2)])
     return (p1, p2)
-
-class Either:
-    def __init__(self, x, t):
-        self.x = x
-        self.t = t
-
-    def bind(self, mf):
-        if is_right(self):
-            return mf(self.x)
-        return self
-        
-EITHER_RIGHT_TYPE = 0
-EITHER_LEFT_TYPE = 1
-
-def Left(x):
-    return Either(x, EITHER_LEFT_TYPE)
-
-def is_left(e):
-    return isinstance(e, Either) and e.t == EITHER_LEFT_TYPE
-
-def Right(x):
-    return Either(x, EITHER_RIGHT_TYPE)
-    
-def is_right(e):
-    return isinstance(e, Either) and e.t == EITHER_RIGHT_TYPE
-
-UNIT = object()
-def Unit():
-    return UNIT
 
 def test1():
     '''
