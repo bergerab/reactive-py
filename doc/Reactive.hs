@@ -1,6 +1,22 @@
 
+module Reactive 
+  (
+    Stream (..)
+  , joinS 
+  , runS 
+  , run
+  , liftS
+  , firstS
+  , leftApp
+  , multicast
+  , interval
+  , accumulate
+  , foldS
+  , countS
+  , untilS
+  ) where
 
--- import Control.Monad
+import Control.Monad (join)
 -- import Control.Monad.Trans.Class
 -- import Control.Concurrent
 -- import Control.Concurrent.Async
@@ -38,6 +54,7 @@ instance Monad Stream where
 
   s >>= k = joinS $ fmap k s
 
+{-
 joinS :: Stream (Stream a) -> Stream a
 joinS ss = Next $ next ss >>= h
  where h (s, ss) = raceM (do (a, s') <- noEmit $ next s 
@@ -48,6 +65,19 @@ joinS ss = Next $ next ss >>= h
                              h rr)
 --       f (s, ss) = do mss <- forkM $ next ss
 --                      h (s, Next mss)
+-}
+
+
+joinS ss = Next $ do
+   e <- liftIO $ newEmitter_
+
+   let h (s, ss) = raceM (noEmit $ runS s $ emit e) 
+                         (do rr <- noEmit $ next ss 
+                             commitM   
+                             h rr)
+   forkM_ $ next ss >>= h
+   next $ receive e
+
 
 -----------------------------------------------------------------------
 
@@ -64,13 +94,12 @@ leftApp sf sx = sf <*> firstS sx
 -----------------------------------------------------------------------
 
 runS :: Stream a -> (a -> IO ()) -> AsyncM ()
-runS (Next m) k = do
-     ifAliveM
-     (a, s) <- m
-     -- use 'async' if we want avoid blocking the stream with k
-     -- liftIO $ async $ k a
-     liftIO $ k a
-     runS s k
+runS s k = h s
+   where h s = do ifAliveM
+                  (a, s') <- next s
+                  -- use 'async' to avoid blocking the stream with k.
+                  liftIO $ async $ k a
+                  h s' 
 
 run :: Stream a -> (a -> IO ()) -> IO ()
 run s k = runM_ (runS s k) return 
@@ -78,12 +107,9 @@ run s k = runM_ (runS s k) return
 -----------------------------------------------------------------------
 
 broadcast :: Stream a -> AsyncM (Emitter a)
-broadcast (Next m) = do 
+broadcast s = do 
      e <- liftIO newEmitter_ 
-     let f m = do (a, Next m') <- m
-                  forkM_ $ f m' 
-                  liftIO $ emit e a  -- emit 'a' in parallel to broadcast of the next event
-     forkM_ $ f m
+     forkM_ $ runS s $ emit e
      return e
 
 receive :: Emitter a -> Stream a
@@ -113,18 +139,37 @@ accumulate a (Next m) = Next $ do
 -- fold the functions emitted from s for n milli-second with the initial value c 
 foldS :: Int -> a -> Stream (a -> a) -> AsyncM a
 foldS n c s = do e <- liftIO $ newEmitter_ 
-                 raceM (runS (accumulate c s) $ emit e)
+                 raceM (runS (accumulate c s) (emit e))
                        (timeout n >> advM) 
                  liftIO $ now e
 
 -- emit the number of events of s for every n milli-second
 countS :: Int -> Stream b -> AsyncM Int
-countS n s = foldS n 0 $ (s >>= \_ -> return $ \b -> b+1) 
+countS n s = foldS n 0 $ (\b -> b+1) <$ s 
 
 -- run s until ms occurs and then runs the stream in ms
 untilS :: Stream a -> AsyncM (Stream a) -> Stream a
+{-
 untilS s ms = Next $ do ms' <- forkM ms
                         next $ joinS $ Next $ return (s, liftS ms')
+-}
+untilS s ms = joinS $ Next $ return (s, liftS ms)
+
+-----------------------------------------------------------------------
+
+-- fetch data by sending requests as a stream of AsyncM and return the results in a stream
+fetchS :: Stream (AsyncM a) -> Stream a
+fetchS sm = Next $ do
+     c <- liftIO newChan
+     let h sm = do (m, sm') <- next sm 
+                   m' <- forkM m
+                   liftIO $ writeChan c m'
+                   h sm'
+     forkM_ $ h sm
+     let f = do m <- liftIO $ readChan c
+                a <- m
+                return (a, Next f)
+     f
 
 -----------------------------------------------------------------------
 
@@ -132,13 +177,13 @@ untilS s ms = Next $ do ms' <- forkM ms
 newtype Signal a = Signal { runSignal ::  IO (a, Signal a) }
 
 -- buffer events from stream s as a signal
-buffer :: Stream a -> AsyncM (Signal a)
-buffer s =  do 
+push2pull :: Stream a -> AsyncM (Signal a)
+push2pull s =  do 
      c <- liftIO newChan
      forkM_ $ runS s (writeChan c) 
-     return $ Signal $ f c
-  where f c = do a <- liftIO $ readChan c
-                 return (a, Signal $ f c)
+     let f = do a <- liftIO $ readChan c
+                return (a, Signal f)
+     return $ Signal f
 
 -- run k for each event of the signal s
 bindG :: Signal a -> (a -> IO b) -> Signal b
@@ -150,11 +195,11 @@ bindG s k = Signal $ do
 -- fetch data by sending requests as a stream and return the results in the order of the requests
 fetch :: Stream a -> (a -> IO b) -> AsyncM (Signal b)
 fetch s k = do 
-     g <- (buffer $ s >>= liftIO . async . k) 
+     g <- (push2pull $ s >>= liftIO . async . k) 
      return $ bindG g wait
 
 -- run signal for each event from stream s
-reactimate :: Stream a -> AsyncM (Signal a) -> Stream a
+reactimate :: Stream b -> AsyncM (Signal a) -> Stream a
 reactimate s ag = Next $ ag >>= h s 
   where h s g = do (_, s') <- next s
                    (a, g') <- liftIO $ runSignal g 
@@ -213,6 +258,11 @@ test9 = do let s = do s1 <- multicast $ interval 100 10
                       return (y, a, b, c, d)
            run s print
 
+test10= do let s = do s1 <- multicast $ interval 100 10
+                      s2 <- multicast $ interval 100 10
+                      pure (,) <*> s1 <*> s2
+           run s print
+
 test12= do let s = do let s1 = interval 100 2
                       let s2 = interval 50 4
                       let s3 = interval 25 8
@@ -237,7 +287,13 @@ test15= do let s = do s1 <- multicast $ interval 100 10
                       ((,) <$> s1) <*> (((,) <$> s2) <*> s3)
            run s print
 
-test17= do let s = do s1 <- multicast $ interval 100 20
+-- fetch delayed signal
+test16= do let s = do s1 <- multicast $ interval 100 10
+                      let s2 = (\x -> timeout 1000 >> return x) <$> s1
+                      fetchS s2
+           run s print
+
+test17= do let s = do s1 <- multicast $ interval 50 40
                       let s2 = interval 100 20 
                       s3 <- multicast $ accumulate 0 (fmap (+) s2)
                       x <- s1
@@ -263,7 +319,7 @@ test20= do let s = do let s1 = interval 100 100
 
 test21= do let s = do let s1 = interval 100 10
                       s2 <- multicast $ interval 1000 10
-                      reactimate s1 $ buffer s2
+                      reactimate s1 $ push2pull s2
            run s print
 
 -- fetch delayed signal
@@ -288,7 +344,7 @@ test23= do let s = do s1 <- multicast $ interval 10 50
 
            run s print
 
-
+{-
 main = do 
           -- let s3 = interval 1000 12
           -- let s2 = interval 2000 6
@@ -299,5 +355,5 @@ main = do
           -- let s = (pure $ (,) 10) <*> s2
           -- let s = do { x <- s1; z <- s3; return (x,z) }
           run s print
-
+-}
 

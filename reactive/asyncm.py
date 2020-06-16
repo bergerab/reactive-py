@@ -1,5 +1,6 @@
 import time
 import threading
+import asyncio
 
 from haskell import *
 
@@ -86,6 +87,16 @@ class AsyncM:
         '''
         return AsyncM(lambda p: self.f(f(p)))
 
+async def run(a):
+    '''
+    asyncio friendly version of runM
+
+    Whenever the AsyncM completes, this function completes
+    '''
+    loop = asyncio.get_running_loop()    
+    f = loop.create_future()
+    runM_(a, None, lambda x: f.set_result(True))
+    await f 
     
 def runM(a, p=None, k=lambda x: x):
     '''
@@ -174,7 +185,6 @@ def allM(a1, a2):
         
         runM(a1, p, kp(0))
         runM(a2, p, kp(1))
-    
     return asyncM(do)
     
 def advM():
@@ -189,11 +199,9 @@ def commitM():
 def timeout(ms):
     def f(p, k):
         def g():
-            time.sleep(ms/1000)
             k(Right(Unit()))
-            
-        t = threading.Thread(target=g) # TODO: replace this with some more lightweight form of threads
-        t.start()
+        loop = asyncio.get_running_loop()            
+        loop.call_later(ms/1000, g)
     return asyncM(f)
 
 class Progress:
@@ -241,18 +249,18 @@ def raceP(p):
     onCancel(p, lambda: [cancel(p1), cancel(p2)])
     return (p1, p2)
 
-def test1():
+async def test1():
     '''
     Wait 10 seconds, then get the system time, map the Progress object to a non-sense value of 3
 
     This proves that the progress value is threaded properly in AsyncM objects, and that ~local~ works.
     The test should print the system time along with 3.
     '''
-    runM_(timeout(10000).bind(lambda _: time.time()) \
-        .bind(lambda t: AsyncM.ask() \
+    await run(timeout(10000).bind(lambda _: time.time()) \
+              .bind(lambda t: AsyncM.ask() \
               .bind(lambda p: print(t, p))).local(lambda p: 3))
 
-def test2():
+async def test2():
     '''
     Tests that errors work. If AsyncM.error is returned in a bind,
     the following computations should be skipped, and the error message should be displayed
@@ -262,41 +270,46 @@ def test2():
           .bind(lambda t: AsyncM.error('You should see this message.')) \
           .bind(lambda t: print('This shouldn\'t show.', t)))
 
-def test3():
+async def test3():
     '''
     Test racing AsyncMs
     '''
-    runM_(raceM(timeout(1000).bind(lambda _: print('First Done')),
+    await run(raceM(timeout(1000).bind(lambda _: print('First Done')),
                 timeout(2000).bind(lambda _: print('Second Done'))) \
           .bind(lambda _: print('Should be immediately after "First Done".')))
 
-def test4():
+async def test4():
     '''
     Basic timeout
     '''
-    runM_(timeout(5000).bind(lambda _: print('Message delayed by 5s')))
+    await run(timeout(5000).bind(lambda _: print('Message delayed by 5s')))
 
-def test5():
+async def test5():
     '''
     Combining timeouts
     '''
-    runM_(timeout(5000).bind(lambda _: timeout(5000).bind(lambda _: print('5s + 5s = 10s of delay'))))
+    await run(timeout(5000).bind(lambda _: timeout(5000).bind(lambda _: print('5s + 5s = 10s of delay'))))
 
-def test6():
+async def test6():
     '''
     allM should wait to complete after both AsyncM arguments complete.
     '''
-    runM_(allM(timeout(2000).bind(lambda _: print('First')),
+    await run(allM(timeout(2000).bind(lambda _: print('First')),
                timeout(5000).bind(lambda _: print('Second'))) \
           .bind(lambda _: print('Should be after both.')))
 
-def test7():
+async def test7():
     '''
     Get two values from different AsyncM and add them together.
     '''
-    runM_(allM(timeout(2000).bind(lambda _: 10),
+    await run(allM(timeout(2000).bind(lambda _: 10),
                timeout(5000).bind(lambda _: 80)) \
           .bind(lambda xs: print(xs[0], '+', xs[1], '=', sum(xs))))
+
+async def wait_for_events():
+    while True:
+        await asyncio.sleep(1)
     
 if __name__ == '__main__':
-    test7()
+    asyncio.run(test7())
+
