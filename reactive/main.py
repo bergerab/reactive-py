@@ -101,12 +101,12 @@ def runM_(a, k=lambda x: x):
     If ~a~ has an error, print it.
     Otherwise, continue down the bind chain.
     '''
-    def k(e):
+    def kp(e):
         if is_left(e):
             print(e.x)
         else:
             return k(e.x)
-    a.f(Progress())(k)
+    a.f(Progress())(kp)
     
 def asyncM(f):
     '''
@@ -141,37 +141,37 @@ def forkM_(a):
 def raceM(a1, a2):
     def do(p, k):
         (p1, p2) = raceP(p)
-	done = False;
+        done = False
         def kp(x):
+            nonlocal done
             if not done:
                 done = True
                 k(x)
-	runM(a1, p1, kp)
-	runM(a2, p2, kp)
+        runM(a1, p1, kp)
+        runM(a2, p2, kp)
     return asyncM(do)
 
 def allM(a1, a2):
     def do(p, k):
-        m1 = Unit()
-        m2 = Unit()
-
-        def kp(pair):
-            def f(x):
-                nonlocal m1, m2
-                if m2 == Unit():
-                    m1 = x
-                    if is_left(x):
-                        return k(Left(x.x))
-                    else:
-                        return Unit()
+        xs = [None, None]
+        count = 0
+        def kp(i):
+            def kpp(x):
+                nonlocal count
+                
+                if is_left(x): # TODO: this error handling isn't exactly the same as the Haskell version
+                    return k(x)
                 else:
-                    y = m2
+                    xs[i] = x.x
                     
-            return f
-                
-                
-        runM(a1, p, handle_e)
+                count += 1
+                if count == 2:
+                    return k(Right(xs))
+            return kpp
         
+        runM(a1, p, kp(0))
+        runM(a2, p, kp(1))
+    
     return asyncM(do)
     
 def advM():
@@ -288,5 +288,41 @@ def test2():
           .bind(lambda t: AsyncM.error('You should see this message.')) \
           .bind(lambda t: print('This shouldn\'t show.', t)))
 
+def test3():
+    '''
+    Test racing AsyncMs
+    '''
+    runM_(raceM(timeout(1000).bind(lambda _: print('First Done')),
+                timeout(2000).bind(lambda _: print('Second Done'))) \
+          .bind(lambda _: print('Should be immediately after "First Done".')))
+
+def test4():
+    '''
+    Basic timeout
+    '''
+    runM_(timeout(5000).bind(lambda _: print('Message delayed by 5s')))
+
+def test5():
+    '''
+    Combining timeouts
+    '''
+    runM_(timeout(5000).bind(lambda _: timeout(5000).bind(lambda _: print('5s + 5s = 10s of delay'))))
+
+def test6():
+    '''
+    allM should wait to complete after both AsyncM arguments complete.
+    '''
+    runM_(allM(timeout(2000).bind(lambda _: print('First')),
+               timeout(5000).bind(lambda _: print('Second'))) \
+          .bind(lambda _: print('Should be after both.')))
+
+def test7():
+    '''
+    Get two values from different AsyncM and add them together.
+    '''
+    runM_(allM(timeout(2000).bind(lambda _: 10),
+               timeout(5000).bind(lambda _: 80)) \
+          .bind(lambda xs: print(xs[0], '+', xs[1], '=', sum(xs))))
+    
 if __name__ == '__main__':
-    test2()
+    test7()
