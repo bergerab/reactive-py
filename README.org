@@ -1,0 +1,9 @@
+* Reactive
+The original Haskell code is in the ~./docs~ folder, and the Python code
+is in ~./reactive~.
+
+~asyncm.py~ has a few tests that can be run manually by running the code
+in a REPL and calling them.
+
+~emitter.py~ has some tests that are run from the ~testsuite()~ function,
+you can just run that file to run the tests.
