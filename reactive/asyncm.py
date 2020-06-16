@@ -305,10 +305,6 @@ async def test7():
     await run(allM(timeout(2000).bind(lambda _: 10),
                timeout(5000).bind(lambda _: 80)) \
           .bind(lambda xs: print(xs[0], '+', xs[1], '=', sum(xs))))
-
-async def wait_for_events():
-    while True:
-        await asyncio.sleep(1)
     
 if __name__ == '__main__':
     asyncio.run(test7())
