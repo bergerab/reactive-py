@@ -96,7 +96,7 @@ async def run(a):
     loop = asyncio.get_running_loop()    
     f = loop.create_future()
     runM_(a, None, f.set_result)
-    return await x 
+    return await f 
     
 def runM(a, p=None, k=lambda x: x):
     '''
