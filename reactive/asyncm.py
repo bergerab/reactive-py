@@ -87,7 +87,7 @@ class AsyncM:
         '''
         return AsyncM(lambda p: self.f(f(p)))
 
-async def run(a):
+async def runMAsync(a):
     '''
     asyncio friendly version of runM
 
@@ -212,7 +212,7 @@ class Progress:
         self.advanceCB = []
 
 def ifAlive(p, f):
-    if p.cancelV:
+    if not p.cancelV:
         f()
 
 def advance(p):
@@ -256,7 +256,7 @@ async def test1():
     This proves that the progress value is threaded properly in AsyncM objects, and that ~local~ works.
     The test should print the system time along with 3.
     '''
-    await run(timeout(10000).bind(lambda _: time.time()) \
+    await runMAsync(timeout(10000).bind(lambda _: time.time()) \
               .bind(lambda t: AsyncM.ask() \
               .bind(lambda p: print(t, p))).local(lambda p: 3))
 
@@ -266,7 +266,7 @@ async def test2():
     the following computations should be skipped, and the error message should be displayed
     (because we are using runM_ and the behavior is that it prints the error message)
     '''
-    runM_(timeout(1000).bind(lambda _: time.time()) \
+    await runMAsync(timeout(1000).bind(lambda _: time.time()) \
           .bind(lambda t: AsyncM.error('You should see this message.')) \
           .bind(lambda t: print('This shouldn\'t show.', t)))
 
@@ -274,7 +274,7 @@ async def test3():
     '''
     Test racing AsyncMs
     '''
-    await run(raceM(timeout(1000).bind(lambda _: print('First Done')),
+    await runMAsync(raceM(timeout(1000).bind(lambda _: print('First Done')),
                 timeout(2000).bind(lambda _: print('Second Done'))) \
           .bind(lambda _: print('Should be immediately after "First Done".')))
 
@@ -282,19 +282,19 @@ async def test4():
     '''
     Basic timeout
     '''
-    await run(timeout(5000).bind(lambda _: print('Message delayed by 5s')))
+    await runMAsync(timeout(5000).bind(lambda _: print('Message delayed by 5s')))
 
 async def test5():
     '''
     Combining timeouts
     '''
-    await run(timeout(5000).bind(lambda _: timeout(5000).bind(lambda _: print('5s + 5s = 10s of delay'))))
+    await runMAsync(timeout(5000).bind(lambda _: timeout(5000).bind(lambda _: print('5s + 5s = 10s of delay'))))
 
 async def test6():
     '''
     allM should wait to complete after both AsyncM arguments complete.
     '''
-    await run(allM(timeout(2000).bind(lambda _: print('First')),
+    await runMAsync(allM(timeout(2000).bind(lambda _: print('First')),
                timeout(5000).bind(lambda _: print('Second'))) \
           .bind(lambda _: print('Should be after both.')))
 
@@ -302,10 +302,9 @@ async def test7():
     '''
     Get two values from different AsyncM and add them together.
     '''
-    await run(allM(timeout(2000).bind(lambda _: 10),
+    await runMAsync(allM(timeout(2000).bind(lambda _: 10),
                timeout(5000).bind(lambda _: 80)) \
           .bind(lambda xs: print(xs[0], '+', xs[1], '=', sum(xs))))
     
 if __name__ == '__main__':
     asyncio.run(test7())
-

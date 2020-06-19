@@ -10,14 +10,14 @@ module Emitter
   , foldE
   , newEmitter_
   , forkM
---  , waitE
+  , waitE
   ) where
 
 import Control.Monad (forM_)
 import Control.Monad.Cont (ContT (..), liftIO)
-import Control.Monad.Trans.Class (lift)
 import Control.Concurrent (MVar (..), newMVar, swapMVar, modifyMVar_, readMVar, newEmptyMVar, tryTakeMVar, putMVar)
 import AsyncM (AsyncM (..), ifAliveM, runM, asyncM)
+import Progress (isAliveP)
 
 data Emitter a = Emitter (MVar a) -- the previous event value
                          (MVar [a -> IO ()]) -- registered callback
@@ -38,17 +38,21 @@ emit (Emitter av kv) a = do
     lst <- swapMVar kv []
     forM_ lst $ \k -> k a
 
+-- TODO: need to remove callback on cancel
 -- register callback 'k' on the emitter
 listen :: Emitter a -> AsyncM a
-listen (Emitter _ kv) = AsyncM $ lift $ lift $ ContT (\k -> modifyMVar_ kv $ \lst -> return (k:lst)) 
+listen (Emitter _ kv) = asyncM $ \_ k -> modifyMVar_ kv $ \lst -> return (k . Right : lst) 
 
 -- check whether an event value already exists, if so, return that value
 -- otherwise, listen to new event value
 waitE :: Emitter a -> AsyncM a
-waitE (Emitter av kv) = AsyncM $ lift $ lift $ ContT (\k -> 
-          do a <- tryTakeMVar av 
-             case a of Just x -> putMVar av x >> k x
-                       Nothing -> modifyMVar_ kv $ \lst -> return (k:lst)) 
+waitE (Emitter av kv) = asyncM $ \p k -> 
+          do b <- isAliveP p
+             if b then do a <- tryTakeMVar av 
+                          case a of Just x -> putMVar av x >> (k . Right) x
+                                    Nothing -> modifyMVar_ kv $ \lst -> return (k . Right : lst) 
+                  -- this removes all callbacks on cancellation --> must one 'waitE' on each 'e' at a time
+                  else swapMVar kv [] >> return ()
 
 -- This is blocking!
 now (Emitter av _) = readMVar av 
